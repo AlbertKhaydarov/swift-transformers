@@ -26,8 +26,7 @@ public struct HubApi {
         if let downloadBase {
             self.downloadBase = downloadBase
         } else {
-            let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-            self.downloadBase = documents.appending(component: "huggingface")
+            self.downloadBase = URL(fileURLWithPath: "/Users/macbook/GitHub/huggingface")
         }
         self.endpoint = endpoint
         self.useBackgroundSession = useBackgroundSession
