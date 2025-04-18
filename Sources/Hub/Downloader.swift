@@ -6,7 +6,8 @@
 //  See LICENSE at https://github.com/huggingface/swift-coreml-diffusers/LICENSE
 //
 
-import Foundation
+//import Foundation
+
 //import Combine
 //
 //class Downloader: NSObject, ObservableObject {
@@ -139,7 +140,13 @@ import Foundation
 //    }
 //}
 
-class Downloader: NSObject, ObservableObject {
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+
+import Foundation
+
+class Downloader: NSObject {
     private(set) var destination: URL
 
     enum DownloadState {
@@ -154,19 +161,27 @@ class Downloader: NSObject, ObservableObject {
         case unexpectedError
     }
 
-   var downloadState: DownloadState = .notStarted
+    var downloadState: DownloadState = .notStarted
     private var continuation: CheckedContinuation<URL, Error>?
     
     private var urlSession: URLSession?
     private var downloadTask: URLSessionDownloadTask?
+    private var isDownloading = false
 
     init(from url: URL, to destination: URL, using authToken: String? = nil, inBackground: Bool = false) {
         self.destination = destination
         super.init()
+        
         let sessionIdentifier = "swift-transformers.hub.downloader"
 
-        var config = URLSessionConfiguration.default
-        if inBackground {
+        #if os(iOS)
+        let isBackgroundCapable = true
+        #else
+        let isBackgroundCapable = false
+        #endif
+
+        var config: URLSessionConfiguration = .default
+        if inBackground && isBackgroundCapable {
             config = URLSessionConfiguration.background(withIdentifier: sessionIdentifier)
             config.isDiscretionary = false
             config.sessionSendsLaunchEvents = true
@@ -179,6 +194,8 @@ class Downloader: NSObject, ObservableObject {
 
     private func setupDownload(from url: URL, with authToken: String?) {
         downloadState = .downloading(0)
+        isDownloading = true
+
         urlSession?.getAllTasks { tasks in
             if let existing = tasks.first(where: { $0.originalRequest?.url == url }) {
                 switch existing.state {
@@ -193,7 +210,7 @@ class Downloader: NSObject, ObservableObject {
                     existing.cancel()
                 }
             }
-            
+
             var request = URLRequest(url: url)
             if let authToken = authToken {
                 request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
@@ -215,16 +232,21 @@ class Downloader: NSObject, ObservableObject {
         urlSession?.invalidateAndCancel()
         if case .notStarted = downloadState {} else {
             continuation?.resume(throwing: URLError(.cancelled))
+            continuation = nil
         }
     }
 }
 
 extension Downloader: URLSessionDownloadDelegate {
-    func urlSession(_: URLSession, downloadTask: URLSessionDownloadTask, didWriteData _: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        downloadState = .downloading(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite))
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
+                    totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        if totalBytesExpectedToWrite > 0 {
+            let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
+            downloadState = .downloading(progress)
+        }
     }
 
-    func urlSession(_: URLSession, downloadTask _: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         do {
             try FileManager.default.moveDownloadedFile(from: location, to: self.destination)
             downloadState = .completed(destination)
@@ -233,13 +255,19 @@ extension Downloader: URLSessionDownloadDelegate {
             downloadState = .failed(error)
             continuation?.resume(throwing: error)
         }
+        continuation = nil
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error = error {
             downloadState = .failed(error)
             continuation?.resume(throwing: error)
+        } else if case .downloading = downloadState {
+            let fallbackError = DownloadError.unexpectedError
+            downloadState = .failed(fallbackError)
+            continuation?.resume(throwing: fallbackError)
         }
+        continuation = nil
     }
 }
 
