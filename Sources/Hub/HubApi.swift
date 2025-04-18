@@ -26,7 +26,9 @@ public struct HubApi {
         if let downloadBase {
             self.downloadBase = downloadBase
         } else {
-            self.downloadBase = URL(fileURLWithPath: "/Users/macbook/GitHub/huggingface")
+            let defaultPath = ProcessInfo.processInfo.environment["HF_HOME"] ?? "/data/huggingface"
+            self.downloadBase = URL(fileURLWithPath: defaultPath)
+//            self.downloadBase = URL(fileURLWithPath: "/Users/macbook/GitHub/huggingface")
         }
         self.endpoint = endpoint
         self.useBackgroundSession = useBackgroundSession
@@ -172,20 +174,47 @@ public extension HubApi {
         // We'll probably need to support Combine as well to play well with Swift UI
         // (See for example PipelineLoader in swift-coreml-diffusers)
         @discardableResult
+//        func download(progressHandler: @escaping (Double) -> Void) async throws -> URL {
+//            guard !downloaded else { return destination }
+//
+//            try prepareDestination()
+//            let downloader = Downloader(from: source, to: destination, using: hfToken, inBackground: backgroundSession)
+//            let downloadSubscriber = downloader.downloadState.sink { state in
+//                if case .downloading(let progress) = state {
+//                    progressHandler(progress)
+//                }
+//            }
+//            _ = try withExtendedLifetime(downloadSubscriber) {
+//                try downloader.waitUntilDone()
+//            }
+//            return destination
+//        }
         func download(progressHandler: @escaping (Double) -> Void) async throws -> URL {
             guard !downloaded else { return destination }
 
             try prepareDestination()
             let downloader = Downloader(from: source, to: destination, using: hfToken, inBackground: backgroundSession)
-            let downloadSubscriber = downloader.downloadState.sink { state in
-                if case .downloading(let progress) = state {
-                    progressHandler(progress)
+            
+            // Создаем Task для отслеживания прогресса
+            let progressTask = Task {
+                while true {
+                    switch downloader.downloadState {
+                    case .downloading(let progress):
+                        progressHandler(progress)
+                    case .completed, .failed:
+                        return
+                    default:
+                        break
+                    }
+                    try await Task.sleep(nanoseconds: 100_000_000) // Проверяем прогресс каждые 0.1 секунды
                 }
             }
-            _ = try withExtendedLifetime(downloadSubscriber) {
-                try downloader.waitUntilDone()
+            
+            defer {
+                progressTask.cancel() // Отменяем задачу отслеживания прогресса при завершении
             }
-            return destination
+            
+            return try await downloader.waitUntilDone()
         }
     }
 
