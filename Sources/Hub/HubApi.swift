@@ -4,7 +4,9 @@
 //
 //  Created by Pedro Cuenca on 20231230.
 //
-
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import Foundation
 
 public struct HubApi {
